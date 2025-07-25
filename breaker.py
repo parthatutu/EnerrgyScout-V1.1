@@ -29,7 +29,7 @@ def read_input_register(addr, scale=1):
         return None
 
 while True:
-    voltage = read_input_register(0x0008, 10)     # Voltage Phase A (scale: 0.1 V)
+    voltage = read_input_register(0x0008, 1)     # Voltage Phase A (scale: 0.1 V)
     current = read_input_register(0x0009, 100)    # Current Phase A (scale: 0.01 A)
     power   = read_input_register(0x000B, 10)     # Active Power Phase A (scale: 0.1 W)
     pf      = read_input_register(0x000A, 1000)   # Power Factor (scale: 0.001)
