@@ -15,7 +15,7 @@ if not client.connect():
     print("? Could not connect to JSY-MK-231.")
     exit()
 
-CURRENT_SCALE = 0.08  # Adjusted scaling factor
+CURRENT_SCALE = 0.1  # Adjusted scaling factor
 
 def read_scaled(addr):
     """Read 2 registers (32-bit) and scale /10000."""
