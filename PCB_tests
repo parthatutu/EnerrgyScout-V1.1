@@ -1,6 +1,10 @@
 import time, logging, serial, RPi.GPIO as GPIO
-logging.basicConfig(); logging.getLogger("pymodbus").setLevel(logging.DEBUG)
+from pymodbus.client import ModbusSerialClient as ModbusClient
 
+logging.basicConfig()
+logging.getLogger("pymodbus").setLevel(logging.DEBUG)
+
+# --- GPIO pins for direction control ---
 DE_PIN, RE_PIN = 23, 24
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(DE_PIN, GPIO.OUT, initial=GPIO.LOW)  # LOW = driver off
@@ -14,7 +18,23 @@ def set_rx():
     GPIO.output(DE_PIN, GPIO.LOW)   # driver off
     GPIO.output(RE_PIN, GPIO.LOW)   # receiver on
 
-# --- Find the real pySerial object used by pymodbus
+# --- Create and connect Modbus client *first* ---
+client = ModbusClient(
+    method="rtu",
+    port="/dev/ttyAMA0",
+    baudrate=9600,
+    parity=serial.PARITY_EVEN,    # many Modbus devices = 8E1
+    stopbits=serial.STOPBITS_ONE,
+    bytesize=serial.EIGHTBITS,
+    timeout=1.5,
+)
+
+if not client.connect():
+    print("❌ Could not connect.")
+    GPIO.cleanup()
+    raise SystemExit
+
+# --- Now wrap the underlying pySerial write ---
 ser = None
 for path in ("socket", "_serial", "transport", "protocol"):
     ser = getattr(client, path, None)
@@ -23,10 +43,8 @@ for path in ("socket", "_serial", "transport", "protocol"):
 if hasattr(ser, "serial"):  # sometimes nested
     ser = ser.serial
 
-print("Underlying serial object:", type(ser))
 assert ser and hasattr(ser, "write"), "Couldn't access pySerial handle"
 
-# --- Wrap write so we toggle DE/RE around actual TX
 orig_write = ser.write
 TURNAROUND_S = 0.006   # try 6 ms at 9600 bps
 
@@ -34,13 +52,20 @@ def write_with_dir(data: bytes):
     print(f"[DIR] TX {len(data)} bytes; DE=1,/RE=1")
     set_tx()
     n = orig_write(data)
-    ser.flush()             # wait until bytes are *physically* sent
-    time.sleep(TURNAROUND_S) # let bus settle, then go to RX
+    ser.flush()                 # wait until bytes are *physically* sent
+    time.sleep(TURNAROUND_S)    # let bus settle, then go to RX
     set_rx()
     print(f"[DIR] RX mode; DE=0,/RE=0 (wait for reply)")
     return n
 
 ser.write = write_with_dir
 
-# --- Sanity: force RX before any request
+# force RX before any request
 set_rx()
+
+# --- Example read to test ---
+UNIT = 1; ADDR = 0x000A
+rr = client.read_holding_registers(ADDR, 1, slave=UNIT)
+print("read_holding_registers:", rr if not rr.isError() else rr)
+
+GPIO.cleanup()
