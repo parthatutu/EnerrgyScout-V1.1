@@ -1,77 +1,45 @@
-from pymodbus.client import ModbusSerialClient as ModbusClient
-import serial, time, RPi.GPIO as GPIO
+# -*- coding: ascii -*-
+import serial, binascii, time
+from serial.rs485 import RS485Settings
 
-# === User settings ===
-PORT      = "/dev/ttyUSB0"       # or "/dev/ttyAMA0"/"/dev/ttyS0" if using Pi UART
-UNIT_ID   = 1                    # your meter’s Modbus address
-BAUD      = 9600
-PARITY    = serial.PARITY_EVEN   # 8E1 per your meter
-STOPBITS  = serial.STOPBITS_ONE
-BYTESIZE  = serial.EIGHTBITS
-TIMEOUT_S = 1.5
+PORT = "/dev/ttyAMA0"  # using AMA0 as you said
+QUERY = "01 04 00 09 00 01 E1 C8"
 
-# RS-485 direction control pin
-DIR_PIN = 23                    # DE & /RE tied here
-TURNAROUND_S = 0.006            # wait after TX before listening
 
-# Register address & scale (adjust to your meter)
-REG_VOLT = 0x0008               # holding register for voltage
-SCALE_V  = 10.0                 # e.g. raw/10 = volts (change per your manual)
-
-# === GPIO setup ===
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(DIR_PIN, GPIO.OUT, initial=GPIO.LOW)  # LOW = receive mode
-
-def set_tx():
-    GPIO.output(DIR_PIN, GPIO.HIGH)  # driver enabled, receiver off
-
-def set_rx():
-    GPIO.output(DIR_PIN, GPIO.LOW)   # driver off, receiver on
-
-# === Modbus client ===
-client = ModbusClient(
-    method="rtu", port=PORT, baudrate=BAUD, parity=PARITY,
-    stopbits=STOPBITS, bytesize=BYTESIZE, timeout=TIMEOUT_S,
-    retries=0, retry_on_empty=True
+ser = serial.Serial(
+    port=PORT,
+    baudrate=9600,
+    bytesize=serial.EIGHTBITS,
+    parity=serial.PARITY_NONE,     # 8N1 per your manual
+    stopbits=serial.STOPBITS_ONE,
+    timeout=0.15,
+    write_timeout=1.0,
+    inter_byte_timeout=0.15
 )
 
-if not client.connect():
-    print("❌ Could not open serial port"); GPIO.cleanup(); raise SystemExit
+# RTS drives DE=/RE tied together (GPIO17)
+ser.rs485_mode = RS485Settings(
+    rts_level_for_tx=True,
+    rts_level_for_rx=False,
+    delay_before_tx=0.0,
+    delay_before_rx=0.00012
+)
 
-# Wrap the underlying pySerial write to toggle DE/RE automatically
-ser = getattr(client, "socket", None) or getattr(client, "_serial", None)
-if hasattr(ser, "serial"): ser = ser.serial
-orig_write = ser.write
+# small silent gap before request
 
-def write_with_dir(data: bytes):
-    set_tx()
-    n = orig_write(data)
-    ser.flush()                  # wait until all bytes sent
-    time.sleep(TURNAROUND_S)     # allow bus settle
-    set_rx()
-    return n
+# Send query as bytes (direct hex)
+query_bytes = bytes.fromhex(QUERY)
+ser.reset_input_buffer()
+ser.reset_output_buffer()
+ser.write(query_bytes)
 
-ser.write = write_with_dir
-set_rx()
+rx = ser.read(7)
+deadline = time.time() + 3.0
 
-def read_voltage():
-    rr = client.read_holding_registers(REG_VOLT, 1, slave=UNIT_ID)
-    if rr.isError():
-        print(f"⚠️ Read error @0x{REG_VOLT:04X}: {rr}")
-        return None
-    return rr.registers[0] / SCALE_V
 
-try:
-    while True:
-        volts = read_voltage()
-        if volts is not None:
-            print(f"Voltage: {volts:.1f} V")
-        else:
-            print("⚠️ No response")
-        time.sleep(1.0)
-except KeyboardInterrupt:
-    pass
-finally:
-    set_rx()
-    client.close()
-    GPIO.cleanup()
+
+
+# Print the TX and RX as hex
+print(f"TX: {QUERY}")
+print(rx.hex())
+ser.close()
