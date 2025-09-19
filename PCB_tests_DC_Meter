@@ -1,0 +1,45 @@
+# -*- coding: ascii -*-
+import serial, binascii, time
+from serial.rs485 import RS485Settings
+
+PORT = "/dev/ttyAMA0"  # using AMA0 as you said
+QUERY = "01 03 01 00 00 1A C5 FD"
+
+
+ser = serial.Serial(
+    port=PORT,
+    baudrate=9600,
+    bytesize=serial.EIGHTBITS,
+    parity=serial.PARITY_NONE,     # 8N1 per your manual
+    stopbits=serial.STOPBITS_ONE,
+    timeout=0.15,
+    write_timeout=1.0,
+    inter_byte_timeout=0.15
+)
+
+# RTS drives DE=/RE tied together (GPIO17)
+ser.rs485_mode = RS485Settings(
+    rts_level_for_tx=True,
+    rts_level_for_rx=False,
+    delay_before_tx=0.0,
+    delay_before_rx=0.00012
+)
+
+# small silent gap before request
+
+# Send query as bytes (direct hex)
+query_bytes = bytes.fromhex(QUERY)
+ser.reset_input_buffer()
+ser.reset_output_buffer()
+ser.write(query_bytes)
+
+rx = ser.read(26)
+deadline = time.time() + 3.0
+
+
+
+
+# Print the TX and RX as hex
+print(f"TX: {QUERY}")
+print(rx.hex())
+ser.close()
