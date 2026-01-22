@@ -1,10 +1,11 @@
 import minimalmodbus
 import serial
 import time
+import serial.rs485
 
 # --- Configuration ---
-PORT_NAME = '/dev/ttyUSB0'  # Check dmesg for your port name (e.g., ttyUSB0 or ttyAMA0 for GPIO UART)
-SLAVE_ADDRESS = 1           # The Modbus ID of your device (decimal)
+PORT_NAME = '/dev/ttyAMA0'  # Check dmesg for your port name (e.g., ttyUSB0 or ttyAMA0 for GPIO UART)
+SLAVE_ADDRESS = 3           # The Modbus ID of your device (decimal)
 BAUDRATE = 9600             # Check your device manual for the correct baud rate
 TIMEOUT = 0.5               # Seconds
 
@@ -21,6 +22,13 @@ instrument.serial.parity = serial.PARITY_NONE
 instrument.serial.stopbits = 1
 instrument.serial.timeout = TIMEOUT
 instrument.mode = minimalmodbus.MODE_RTU # Assuming RTU mode
+
+instrument.serial.rs485_mode = serial.rs485.RS485Settings(
+    rts_level_for_tx=True,
+    rts_level_for_rx=False,
+    loopback=False,
+    delay_before_tx=0.0015,
+    delay_before_rx=0.00005)
 
 # Optional: Good practice for RS-485
 instrument.close_port_after_each_call = True 
