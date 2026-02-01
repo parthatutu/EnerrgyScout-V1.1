@@ -3,81 +3,102 @@ import serial
 import serial.rs485 
 import time
 
-# --- SHARED CONFIGURATION ---
-PORT = '/dev/ttyAMA0'
-BAUDRATE = 9600
-BEST_DELAY = 0.01  
+# --- CONFIGURATION ---
+MODBUS_PORT  = '/dev/ttyAMA0'
+GPS_PORT     = '/dev/ttyAMA2' # Based on your successful test
+BAUD_MODBUS  = 9600
+BAUD_GPS     = 9600
+GPS_INTERVAL = 1800  # 30 minutes (1800 seconds)
 
-def setup_instrument(slave_id):
-    """Initializes meter with hardware RTS settings."""
+# --- INSTRUMENT SETUP ---
+def setup_modbus(slave_id):
     try:
-        ins = minimalmodbus.Instrument(PORT, slave_id)
-        ins.serial.baudrate = BAUDRATE
+        ins = minimalmodbus.Instrument(MODBUS_PORT, slave_id)
+        ins.serial.baudrate = BAUD_MODBUS
         ins.serial.timeout = 0.5
         ins.mode = minimalmodbus.MODE_RTU
-        ins.clear_buffers_before_each_transaction = True
-        
-        # Configure hardware RTS switching (GPIO 17)
         ins.serial.rs485_mode = serial.rs485.RS485Settings(
-            rts_level_for_tx=True,
-            rts_level_for_rx=False,
-            delay_before_tx=0.01,
-            delay_before_rx=BEST_DELAY
+            rts_level_for_tx=True, rts_level_for_rx=False,
+            delay_before_tx=0.01, delay_before_rx=0.01
         )
         return ins
-    except Exception as e:
-        print(f"Failed to initialize ID {slave_id}: {e}")
-        return None
+    except: return None
 
-# --- DEFINE AND INITIALIZE METERS ---
-# We build the list and initialize the 'obj' key immediately
-meters_list = [
-    {"id": 4, "name": "AC Meter (ID 4)", "type": "ac", "obj": setup_instrument(4)},
-    {"id": 2, "name": "DC Meter (ID 2)", "type": "dc", "obj": setup_instrument(2)},
-    {"id": 3, "name": "DC Meter (ID 3)", "type": "dc", "obj": setup_instrument(3)}
+meters = [
+    {"id": 4, "name": "AC Meter", "type": "ac", "obj": setup_modbus(4)},
+    {"id": 2, "name": "DC Meter 1", "type": "dc", "obj": setup_modbus(2)},
+    {"id": 3, "name": "DC Meter 2", "type": "dc", "obj": setup_modbus(3)}
 ]
 
-print(f"Starting Sequential Polling (5s per device)...")
-print("-" * 70)
+def parse_nmea_to_decimal(value, direction):
+    """Converts DDMM.MMMM to Decimal Degrees"""
+    if not value or not direction: return None
+    # Scaling/Dividing logic: 
+    # DDMM.MMMM -> Degrees = DD, Minutes = MM.MMMM
+    float_val = float(value)
+    degrees = int(float_val / 100)
+    minutes = float_val - (degrees * 100)
+    decimal = degrees + (minutes / 60)
+    if direction in ['S', 'W']:
+        decimal *= -1
+    return round(decimal, 6)
+
+def get_gps_location():
+    print(f"\n[GPS] Attempting to acquire location from {GPS_PORT}...")
+    try:
+        with serial.Serial(GPS_PORT, BAUD_GPS, timeout=2) as ser:
+            # Check for data for up to 5 seconds to ensure we catch a $GPRMC line
+            start_search = time.time()
+            while time.time() - start_search < 5:
+                line = ser.readline().decode('ascii', errors='replace').strip()
+                if line.startswith("$GPRMC"):
+                    parts = line.split(',')
+                    if len(parts) > 6 and parts[2] == 'A': # 'A' means Active/Fix
+                        lat = parse_nmea_to_decimal(parts[3], parts[4])
+                        lon = parse_nmea_to_decimal(parts[5], parts[6])
+                        return f"LAT: {lat}, LON: {lon}"
+                    elif len(parts) > 2 and parts[2] == 'V':
+                        return "NO FIX (Satellite Search in Progress)"
+            return "TIMEOUT (No Data on Serial)"
+    except Exception as e:
+        return f"SERIAL ERROR: {e}"
+
+# --- MAIN EXECUTION ---
+last_gps_time = 0 
+
+print("System Started. Entering Polling Loop...")
 
 try:
     while True:
-        for meter in meters_list:
-            # Get the instrument object from the dictionary
-            ins = meter["obj"]
+        current_time = time.time()
+
+        # 1. GPS UPDATE (Every 30 Minutes)
+        if current_time - last_gps_time >= GPS_INTERVAL:
+            location_result = get_gps_location()
+            print(f">>> GPS UPDATE: {location_result}")
+            last_gps_time = current_time
+
+        # 2. METER POLLING (5 Seconds per meter)
+        for m in meters:
+            if m["obj"] is None: continue
             
-            # Skip if the meter failed to initialize
-            if ins is None:
-                print(f"Skipping {meter['name']} (Not Initialized)")
-                continue
+            print(f"\n--- Reading {m['name']} (Slave {m['id']}) ---")
+            meter_start = time.time()
             
-            print(f"\n>>> Polling {meter['name']} for 5 seconds...")
-            start_time = time.time()
-            
-            while (time.time() - start_time) < 5:
+            while time.time() - meter_start < 5:
                 try:
-                    if meter["type"] == "ac":
-                        # Eastron SDM630: L3 Voltage (Reg 4, FC 04)
-                        v_ac = ins.read_float(4, functioncode=4, number_of_registers=2)
-                        print(f"[{meter['name']}] L3 Voltage: {v_ac:.2f} V")
-                    
+                    if m["type"] == "ac":
+                        # Read Voltage for AC (example register 4)
+                        val = m["obj"].read_float(4, functioncode=4)
+                        print(f"{m['name']} Voltage: {val:.2f}V")
                     else:
-                        # JSY DC Meter: (FC 03)
-                        # Voltage: 0x0100 (256), Current: 0x0102 (258), PF: 0x010A (266)
-                        v_raw = ins.read_long(256, functioncode=3)
-                        i_raw = ins.read_long(258, functioncode=3)
-                        pf_raw = ins.read_long(266, functioncode=3)
-                        
-                        voltage = v_raw / 10000.0
-                        current = i_raw / 100000.0
-                        pf      = pf_raw / 1000.0
-                        
-                        print(f"[{meter['name']}] V: {voltage:.2f}V | I: {current:.3f}A | PF: {pf:.2f}")
-                
+                        # Read Voltage for DC (example register 256)
+                        raw_v = m["obj"].read_long(256, functioncode=3)
+                        print(f"{m['name']} Voltage: {raw_v/10000.0:.2f}V")
                 except Exception:
-                    print(f"[{meter['name']}] Read Failed")
+                    print(f"{m['name']}: Read Error")
                 
-                time.sleep(0.5)
+                time.sleep(1) # Frequency of reads within the 5s window
 
 except KeyboardInterrupt:
-    print("\nScript stopped by user.")
+    print("\nShutting down master script.")
