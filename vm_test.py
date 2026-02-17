@@ -7,7 +7,7 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 
 # --- INFLUXDB CLOUD CONFIGURATION ---
 INFLUX_URL = "https://us-east-1-1.aws.cloud2.influxdata.com"
-INFLUX_TOKEN = "YOUR_API_TOKEN_HERE"  # Replace with your actual token
+INFLUX_TOKEN = "qsGKuJsL9po_6rsu8VpoLmspiyWfcvQRK2oCpu2Vht6je5_aYJMk16YKAci0cQB2Jn0-3hpkScs6KtBLJUZEVw=="  # Replace with your actual token
 INFLUX_ORG = "Atutu"
 INFLUX_BUCKET = "power-monitoring"
 
@@ -31,7 +31,7 @@ def setup_modbus(slave_id):
         ins.mode = minimalmodbus.MODE_RTU
         ins.serial.rs485_mode = serial.rs485.RS485Settings(
             rts_level_for_tx=True, rts_level_for_rx=False,
-            delay_before_tx=0.01, delay_before_rx=0.01
+            delay_before_tx=0.001, delay_before_rx=0.001
         )
         return ins
     except: 
